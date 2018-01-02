@@ -4,13 +4,11 @@ $LOAD_PATH.unshift(lib) unless $LOAD_PATH.include?(lib)
 
 Gem::Specification.new do |gem|
   gem.name          = "fluent-plugin-ses"
-  gem.version       = "0.0.4"
+  gem.version       = "1.0.0"
   gem.authors       = ["Spring_MT"]
   gem.email         = ["today.is.sky.blue.sky@gmail.com"]
   gem.summary       = %q{Fluent output plugin for AWS SES}
   gem.homepage      = "https://github.com/SpringMT/fluent-plugin-ses"
-
-  gem.rubyforge_project = "fluent-plugin-ses"
 
   gem.files         = `git ls-files`.split($/)
   gem.executables   = gem.files.grep(%r{^bin/}).map{ |f| File.basename(f) }
@@ -18,8 +16,7 @@ Gem::Specification.new do |gem|
   gem.require_paths = ["lib"]
 
   gem.add_runtime_dependency "fluentd"
-  gem.add_runtime_dependency "fluent-mixin-plaintextformatter"
-  gem.add_runtime_dependency "aws-sdk-v1"
+  gem.add_runtime_dependency "aws-sdk-ses", "~> 1.6"
   gem.description = <<description
 Fluent output plugin for AWS SES
 description

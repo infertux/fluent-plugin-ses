@@ -1,23 +1,21 @@
-# encoding: UTF-8
+require 'fluent/plugin/output'
 
-require 'fluent/mixin/plaintextformatter'
-
-module Fluent
-  class SESOutput < Fluent::BufferedOutput
+module Fluent::Plugin
+  class SESOutput < Output
     Fluent::Plugin.register_output('ses', self)
 
     def initialize
       super
-      require 'aws-sdk-v1'
+      require 'aws-sdk-ses'
     end
 
-    include SetTagKeyMixin
+    include Fluent::SetTagKeyMixin
     config_set_default :include_tag_key, false
-    include SetTimeKeyMixin
-    include Fluent::Mixin::PlainTextFormatter
+    include Fluent::SetTimeKeyMixin
 
     config_param :aws_key_id,  :string
     config_param :aws_sec_key, :string
+    config_param :aws_region,  :string
 
     config_param :from,               :string
     config_param :to,                 :string, :default => ""
@@ -28,12 +26,9 @@ module Fluent
 
     def start
       super
-      options = {}
-      if @aws_key_id && @aws_sec_key
-        options[:access_key_id]     = @aws_key_id
-        options[:secret_access_key] = @aws_sec_key
-      end
-      @ses = AWS::SimpleEmailService.new options
+
+      credentials = Aws::Credentials.new(@aws_key_id, @aws_sec_key)
+      @ses = Aws::SES::Client.new(region: @aws_region, credentials: credentials)
 
       to_addresses  = @to.split ","
       if to_addresses.empty?
@@ -50,11 +45,39 @@ module Fluent
       unless bcc_addresses.empty?
         @destination[:bcc_addresses] = bcc_addresses
       end
-      valid!
+
+      log.debug "ses: started"
     end
 
-    def write(chunk)
-      body_text = chunk.read.force_encoding "utf-8"
+    # method for async buffered output mode
+    def try_write(chunk)
+      chunk_id = chunk.unique_id
+      log.info "ses: try_write", chunk_id: dump_unique_id_hex(chunk_id)
+
+      chunks = {}
+      chunk.each do |time, record|
+        time = time.to_r if time.is_a?(Fluent::EventTime)
+        chunks[time] = Time.at(time).to_s
+
+        record.each do |key, value|
+          chunks[time] << "  - #{key}: #{value}\n"
+        end
+
+        chunks[time] << "\n"
+      end
+
+      body_text = begin
+        chunks.sort.reverse.map(&:last).join
+      rescue StandardError => e
+        "Rescued #{e.inspect} with: #{chunks.inspect}"
+      end
+
+      body_text << <<-METADATA.gsub(/\A\s{8}/, "")
+        Metadata:
+          - timekey: #{chunk.metadata.timekey.inspect}
+          - tag: #{chunk.metadata.tag.inspect}
+          - variables: #{chunk.metadata.variables.inspect}
+      METADATA
 
       options = {
         :source      => @from,
@@ -64,25 +87,19 @@ module Fluent
           :body    => {:text => {:data => body_text}},
         },
       }
+
       reply_to_addresses = @reply_to_addresses.split ","
       unless reply_to_addresses.empty?
         options[:reply_to_addresses] = reply_to_addresses
       end
 
       begin
-        res = @ses.client.send_email options
+        @ses.send_email options
+        log.info "ses: message sent"
+        commit_write(chunk_id)
       rescue => e
-        $log.error e.message
+        log.error "ses: #{e.message}"
       end
     end
-
-    private
-    def valid!
-      identity = @ses.identities[@from]
-      unless identity.verified?
-        raise Fluent::ConfigError, "From address is not verified. Please check AWS SES service."
-      end
-    end
-
   end
 end
